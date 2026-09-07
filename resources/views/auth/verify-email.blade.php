@@ -3,35 +3,30 @@
 @section('title', 'Verifikasi Email — hoaxlin.id')
 
 @section('content')
-<div style="min-height:100vh; display:flex; align-items:center; justify-content:center; padding:6rem 1rem 3rem;">
-    <div class="glow-orb glow-orb-1" style="opacity:0.5;" aria-hidden="true"></div>
-    <div style="width:100%; max-width:480px; position:relative;" class="animate-scale-in">
-        <div class="glass-card-solid" style="padding:2.75rem; text-align:center;" role="main">
-            <div style="font-size:2.5rem; margin-bottom:1rem;" aria-hidden="true">✉️</div>
-            <h1 style="font-size:1.5rem; font-weight:700; margin-bottom:0.75rem;">Verifikasi Alamat Email</h1>
-            <p style="color:var(--color-text-muted); line-height:1.7; margin-bottom:1.5rem;">
-                Tautan verifikasi telah dikirim ke <strong style="color:var(--color-text-secondary);">{{ auth()->user()->email }}</strong>. Verifikasi email untuk mengakses riwayat dan mengirim umpan balik.
-            </p>
-
-            @if (session('status') === 'verification-link-sent')
-                <div style="padding:0.875rem; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.25); border-radius:0.75rem; color:#34d399; font-size:0.875rem; margin-bottom:1.25rem;" role="status">
-                    Tautan verifikasi baru telah dikirim.
-                </div>
-            @endif
-
-            <form method="POST" action="{{ route('verification.send') }}" style="margin-bottom:1rem;">
-                @csrf
-                <button type="submit" class="btn-primary" style="width:100%; justify-content:center;">Kirim Ulang Email Verifikasi</button>
-            </form>
-
-            <div style="display:flex; justify-content:center; gap:1rem; flex-wrap:wrap;">
-                <a href="{{ route('profile') }}" class="btn-ghost">Ubah Email</a>
-                <form method="POST" action="{{ route('logout') }}">
-                    @csrf
-                    <button type="submit" class="btn-ghost">Keluar</button>
-                </form>
-            </div>
-        </div>
+<x-auth.card title="Verifikasi alamat email" description="Verifikasi email untuk mengakses riwayat dan mengirim umpan balik.">
+    <div class="ds-prose mb-4">
+        <p>Tautan verifikasi telah dikirim ke <strong>{{ auth()->user()->email }}</strong>.</p>
     </div>
-</div>
+
+    @if(session('status') === 'verification-link-sent')
+    <div class="ds-alert ds-alert-success mb-4" role="status">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span>Tautan verifikasi baru telah dikirim.</span>
+    </div>
+    @endif
+
+    <form method="POST" action="{{ route('verification.send') }}" data-double-submit>
+        @csrf
+        <button type="submit" class="ds-btn ds-btn-primary ds-btn-block">Kirim ulang email verifikasi</button>
+    </form>
+    <x-slot:footer>
+        <div class="ds-actions ds-actions-center">
+            <a href="{{ route('profile') }}" class="ds-btn ds-btn-ghost ds-btn-sm">Ubah email</a>
+            <form method="POST" action="{{ route('logout') }}">
+                @csrf
+                <button type="submit" class="ds-btn ds-btn-ghost ds-btn-sm">Keluar</button>
+            </form>
+        </div>
+    </x-slot:footer>
+</x-auth.card>
 @endsection

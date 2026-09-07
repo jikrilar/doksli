@@ -1,3 +1,7 @@
+{{-- Livewire processing progress (UI-v2 Phase 4).
+  Contracts preserved: wire:key, conditional wire:poll.2s.visible, role=progressbar
+  with aria values, aria-live percentage, data-stage-label hooks for the vanilla
+  JS fallback, auto-reload on completion. Styling only. --}}
 <div
     wire:key="submission-progress-{{ $submission->id }}"
     role="region"
@@ -8,54 +12,53 @@
             wire:poll.2s.visible="refreshProgress"
         @endif
     >
-    {{-- Progress Bar --}}
-    <div style="width:4rem; height:4rem; margin:0 auto 1.25rem; border-radius:1rem; background:rgba(99,102,241,0.12); display:flex; align-items:center; justify-content:center; font-size:1.75rem;" aria-hidden="true">
-        @if($isFailed)
-            ❌
-        @elseif($isCompleted)
-            ✅
-        @else
-            ⏳
-        @endif
-    </div>
+    @if($isFailed)
+        <span class="ds-progress-icon is-failed" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </span>
+    @elseif($isCompleted)
+        <span class="ds-progress-icon is-done" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+    @else
+        <span class="ds-spinner" role="status" aria-label="Memproses"></span>
+    @endif
 
-    <p style="color:var(--color-primary-light); font-size:0.8125rem; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:0.75rem;">
-        Status: <span data-stage-label>{{ $isFailed ? 'Gagal' : ($isCompleted ? 'Selesai' : $stageLabel) }}</span>
-    </p>
+    <p class="ds-eyebrow mt-4">Status: <span data-stage-label>{{ $isFailed ? 'Gagal' : ($isCompleted ? 'Selesai' : $stageLabel) }}</span></p>
 
-    <h1 style="font-size:1.5rem; font-weight:700; margin-bottom:0.75rem;">
+    <h2 class="ds-progress-title">
         {{ $isFailed ? 'Pemrosesan Gagal' : ($isCompleted ? 'Analisis Selesai' : 'Sedang Menganalisis') }}
-    </h1>
+    </h2>
 
-    <p style="color:var(--color-text-muted); line-height:1.7; max-width:560px; margin:0 auto 1.5rem;">
+    <p class="ds-progress-desc">
         @if($isFailed)
             Terjadi kendala saat memproses input. Silakan coba kirim ulang atau hubungi administrator jika masalah berlanjut.
         @elseif($isCompleted)
             Analisis telah selesai. Hasil deteksi akan ditampilkan di bawah.
         @else
-            Input kamu sedang diproses oleh sistem AI. Tahapan saat ini: <strong style="color:var(--color-text-secondary);" data-stage-label>{{ $stageLabel }}</strong> — halaman ini akan diperbarui otomatis.
+            Input kamu sedang diproses. Tahapan saat ini: <strong data-stage-label>{{ $stageLabel }}</strong> — halaman ini akan diperbarui otomatis.
         @endif
     </p>
 
-    {{-- Accessible Progress Bar --}}
-    <div style="max-width:480px; margin:0 auto 1rem;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
-            <span style="color:var(--color-text-muted); font-size:0.75rem; font-weight:500;">Progress</span>
-            <span style="color:var(--color-primary-light); font-size:0.8125rem; font-weight:700;" aria-live="polite">{{ $progress }}%</span>
+    <div class="ds-progress-meter">
+        <div class="ds-progress-row">
+            <span>Progress</span>
+            <span aria-live="polite">{{ $progress }}%</span>
         </div>
         <div
+            class="ds-confidence-track"
             role="progressbar"
             aria-valuenow="{{ $progress }}"
             aria-valuemin="0"
             aria-valuemax="100"
             aria-label="Progress pemrosesan {{ $progress }} persen, tahap {{ $stageLabel }}"
-            style="width:100%; height:0.75rem; background:rgba(99,102,241,0.15); border-radius:9999px; overflow:hidden; border:1px solid rgba(99,102,241,0.15);"
         >
             <div
-                style="height:100%; width:{{ $progress }}%; background:linear-gradient(90deg, {{ $isFailed ? '#f87171, #ef4444' : ($isCompleted ? '#34d399, #10b981' : '#818cf8, #06b6d4') }}); border-radius:9999px; transition:width 0.6s ease; will-change:width;"
+                class="ds-progress-fill{{ $isFailed ? ' is-failed' : ($isCompleted ? ' is-done' : '') }}"
+                style="width: {{ $progress }}%;"
             ></div>
         </div>
-        <div style="display:flex; justify-content:space-between; margin-top:0.5rem; gap:0.25rem;">
+        <div class="ds-progress-stages" aria-hidden="true">
             @php
                 $stages = [
                     ['label' => 'Antrean', 'pct' => 0],
@@ -66,16 +69,14 @@
                 ];
             @endphp
             @foreach($stages as $s)
-                <span style="font-size:0.625rem; font-weight:500; color:{{ $progress >= $s['pct'] ? 'var(--color-primary-light)' : 'var(--color-text-muted)' }}; text-align:center; flex:1;">
-                    {{ $s['label'] }}
-                </span>
+                <span class="{{ $progress >= $s['pct'] ? 'is-on' : '' }}">{{ $s['label'] }}</span>
             @endforeach
         </div>
     </div>
 
     @if($isCompleted)
-        <p style="margin-top:1.25rem;">
-            <a href="{{ route('hasil', $submission->id) }}" class="btn-primary" style="display:inline-flex;" wire:navigate>
+        <p class="mt-5">
+            <a href="{{ route('hasil', $submission->id) }}" class="ds-btn ds-btn-primary" wire:navigate>
                 Lihat Hasil
             </a>
         </p>
