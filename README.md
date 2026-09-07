@@ -1,381 +1,785 @@
-# hoaxlin.id — Sistem Deteksi Hoax BERT
+# Doksli
 
-Platform web untuk memeriksa indikasi hoax pada berita berbahasa Indonesia. **Model BERT** yang di-*fine-tune* (IndoBERT) menentukan label `valid` / `hoax` / `meragukan` (threshold 0.99); **OpenAI** hanya untuk OCR gambar, transkripsi video, dan penjelasan naratif.
+**Doksli** adalah aplikasi web untuk membantu pengguna memeriksa indikasi kebenaran informasi dan berita berbahasa Indonesia. Sistem menerima input berupa **teks, gambar, video, tautan video, dan URL berita**, mengekstraksi kontennya menjadi teks, lalu menjalankan klasifikasi menggunakan model **IndoBERT** yang telah di-*fine-tune* untuk deteksi hoax.
 
-> **Status:** Pipeline `text` end-to-end telah proven (C5): `ProcessSubmission → Extract → Classify (BERT 1.0)` → `DetectionResult` via `queue:work`. Lihat `CHECKLIST_TASK.md` untuk progress 95%.
+Hasil pemeriksaan ditampilkan sebagai salah satu dari tiga status:
 
----
+- **Valid** — model memiliki keyakinan tinggi bahwa pola teks lebih dekat dengan kelas berita valid.
+- **Hoax** — model memiliki keyakinan tinggi bahwa pola teks lebih dekat dengan kelas hoax.
+- **Meragukan** — confidence model belum melewati threshold yang ditentukan sehingga hasil tidak dipaksakan menjadi valid atau hoax.
 
-## Daftar Isi
-- [Stack](#stack)
-- [Prasyarat](#prasyarat)
-- [Quick Start — 5 Menit](#quick-start--5-menit)
-- [Setup Developer Lengkap](#setup-developer-lengkap)
-- [Layanan BERT (FastAPI)](#layanan-bert-fastapi)
-- [Queue & Pipeline](#queue--pipeline)
-- [Testing](#testing)
-- [Panduan Administrator](#panduan-administrator)
-- [Struktur Proyek](#struktur-proyek)
-- [Troubleshooting](#troubleshooting)
-- [Deployment Singkat](#deployment-singkat)
+> Doksli adalah alat bantu pemeriksaan informasi, bukan lembaga pemeriksa fakta dan bukan sumber putusan hukum. Hasil sistem bersifat probabilistik dan tetap perlu dibandingkan dengan sumber tepercaya.
 
 ---
 
-## Stack
+## Fitur Utama
 
-| Lapisan | Teknologi |
-|---|---|
-| **Backend** | Laravel 12, PHP 8.2+, MySQL 8+, Laravel Queue (database) |
-| **Frontend** | Livewire 4.3, Filament 5, Tailwind 4, Vite |
-| **AI** | FastAPI + Transformers 5.14 + PyTorch 2.13 (IndoBERT `indobenchmark/indobert-base-p1`) |
-| **Layanan Pendukung** | OpenAI API (Vision `gpt-4o-mini`, Whisper `whisper-1`, Chat `gpt-4o-mini`) |
+- Pemeriksaan berita melalui teks langsung.
+- OCR gambar atau tangkapan layar menggunakan OpenAI Vision.
+- Transkripsi video menjadi teks menggunakan OpenAI.
+- Pemeriksaan artikel dari URL berita.
+- Dukungan input tautan video.
+- Klasifikasi berita menggunakan layanan IndoBERT terpisah berbasis FastAPI.
+- Confidence score dan status `valid`, `hoax`, atau `meragukan`.
+- Penjelasan hasil dalam bahasa yang lebih mudah dipahami.
+- Progress pemrosesan asynchronous melalui Laravel Queue.
+- Registrasi, login, verifikasi email, reset password, dan pengelolaan profil.
+- Riwayat pemeriksaan untuk pengguna terdaftar.
+- Feedback terhadap hasil deteksi.
+- Ekspor riwayat ke CSV.
+- Ekspor hasil pemeriksaan ke PDF.
+- Halaman statistik publik.
+- Panel administrator menggunakan Filament.
+- Pengelolaan dataset dan data operasional.
+- Rate limiting, CAPTCHA sederhana, dan validasi upload.
 
 ---
+
+## Cara Kerja
+
+Alur utama Doksli:
+
+```text
+Pengguna mengirim informasi
+        │
+        ▼
+Validasi input
+        │
+        ▼
+Ekstraksi teks
+├── Teks       → normalisasi
+├── Gambar     → OCR
+├── Video      → transkripsi
+├── Video URL  → ekstraksi/transkripsi
+└── URL berita → ekstraksi artikel
+        │
+        ▼
+IndoBERT Classification
+        │
+        ├── confidence >= threshold → Valid / Hoax
+        └── confidence < threshold  → Meragukan
+        │
+        ▼
+Pembuatan penjelasan
+        │
+        ▼
+Hasil disimpan dan ditampilkan
+```
+
+Model BERT adalah **classifier utama**. OpenAI digunakan sebagai layanan pendukung untuk kebutuhan seperti OCR, transkripsi, translasi bila diperlukan, dan penyusunan penjelasan hasil.
+
+---
+
+## Tech Stack
+
+### Web Application
+
+- PHP 8.2+
+- Laravel 12
+- Livewire 4
+- Filament 5
+- Blade
+- Tailwind CSS 4
+- Vite
+- MySQL
+- Laravel Queue
+- DomPDF
+
+### Machine Learning Service
+
+- Python 3.10+
+- FastAPI
+- Uvicorn
+- PyTorch
+- Hugging Face Transformers
+- IndoBERT
+
+### External Services
+
+- OpenAI API
+  - OCR / Vision
+  - Transcription
+  - Translation
+  - Explanation generation
+
+---
+
+## Arsitektur Singkat
+
+Doksli menggunakan dua service utama:
+
+```text
+┌───────────────────────────────┐
+│          Browser              │
+└───────────────┬───────────────┘
+                │
+                ▼
+┌───────────────────────────────┐
+│ Laravel 12                    │
+│                               │
+│ Blade / Livewire              │
+│ Authentication                │
+│ Validation                    │
+│ Queue Jobs                    │
+│ History & Feedback            │
+│ Filament Admin                │
+└───────────────┬───────────────┘
+                │
+       ┌────────┴─────────┐
+       ▼                  ▼
+┌──────────────┐   ┌───────────────┐
+│ MySQL        │   │ FastAPI BERT  │
+│              │   │               │
+│ submissions  │   │ IndoBERT      │
+│ results      │   │ inference     │
+│ users        │   └───────────────┘
+│ feedback     │
+└──────────────┘
+       │
+       └──────────────► OpenAI API
+                        OCR / transcription /
+                        explanation
+```
+
+Layanan FastAPI sengaja dipisahkan dari Laravel agar proses machine learning tetap berada pada ekosistem Python dan dapat dikembangkan atau di-*deploy* secara independen.
+
+---
+
+# Instalasi
 
 ## Prasyarat
 
-- **PHP** 8.2+ + Composer 2.x + Node 18+ + npm
-- **MySQL** 8+ (atau gunakan SQLite untuk test)
-- **Python** 3.10+ (disarankan 3.12, terverifikasi di 3.14) + pip
-- **Git**, **XAMPP** (atau MySQL standalone) di Windows
-- **FFprobe** opsional (untuk cek durasi video, `StoreSubmissionRequest` akan skip jika tidak ada)
-- **ClamAV** opsional (`clamdscan` untuk malware scan)
+Pastikan perangkat sudah memiliki:
 
-Cek versi:
+- PHP 8.2 atau lebih baru.
+- Composer 2.x.
+- Node.js dan npm.
+- MySQL 8+.
+- Python 3.10+.
+- Git.
 
-```powershell
-php -v; composer -v; node -v; npm -v; python --version; mysql --version
+Opsional:
+
+- FFmpeg / FFprobe untuk kebutuhan pemrosesan video.
+- ClamAV jika malware scanning media diaktifkan.
+
+Periksa versi:
+
+```bash
+php -v
+composer --version
+node -v
+npm -v
+python --version
+git --version
 ```
 
 ---
 
-## Quick Start — 5 Menit
+## 1. Clone Repository
 
-```powershell
-# 1. Clone & install
-git clone <repo> hoax-detector; cd hoax-detector
-composer install; npm install
-
-# 2. Env & DB
-Copy-Item .env.example .env
-# → isi DB_DATABASE=hoax_detector, OPENAI_API_KEY, BERT_SERVICE_TOKEN (lihat di bawah)
-php artisan key:generate
-# Buat DB di MySQL: CREATE DATABASE hoax_detector CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-php artisan migrate --seed
-php artisan storage:link
-
-# 3. Admin
-php artisan make:filament-user  # isi email & password, lalu di DB: UPDATE users SET is_admin=1 WHERE email='...';
-
-# 4. BERT (wajib untuk klasifikasi — bukan opsional)
-cd bert-service
-py -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-# Pastikan .env berisi:
-#   BERT_MODEL_PATH=C:/xampp/htdocs/hoax-detector/models/indobert-hoax/v1.0.0
-#   BERT_MODEL_VERSION=v1.0.0
-#   BERT_SERVICE_TOKEN=local-dev-token-change-me  (samakan dengan Laravel .env)
-cd ..
-
-# 5. Jalankan SEMUA layanan (4 proses sekaligus)
-composer run dev
-# → http://localhost:8000 (Laravel)
-# → http://127.0.0.1:8001/health/live (BERT liveness) — harus 200
-
-# 6. Cek di browser: buka http://localhost:8000, kirim teks "Beredar unggahan..." → /hasil/{id} akan polling 2s dan menampilkan label
+```bash
+git clone https://github.com/jikrilar/doksli.git
+cd doksli
 ```
 
-**Kenapa `composer run dev` wajib (bukan `php artisan serve` saja)?** Karena ekstraksi & klasifikasi berjalan **async via queue** di `extract-text,extract-media,inference,explanation`. `php artisan serve` saja tidak menjalankan `queue:listen`, sehingga submission akan **stuck 60% (classifying)** selamanya. `composer run dev` menjalankan `serve + queue:listen --queue=extract-text,extract-media,inference,explanation,default + pail + vite` sekaligus.
+## 2. Install Dependency Laravel
+
+```bash
+composer install
+```
+
+## 3. Install Dependency Frontend
+
+```bash
+npm install
+```
+
+## 4. Buat Environment Laravel
+
+Linux/macOS:
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Generate application key:
+
+```bash
+php artisan key:generate
+```
+
+Untuk branding lokal, sesuaikan minimal:
+
+```env
+APP_NAME="Doksli"
+APP_URL=http://localhost:8000
+APP_TIMEZONE=Asia/Jakarta
+```
 
 ---
 
-## Setup Developer Lengkap
+## 5. Konfigurasi Database
 
-### 1. Konfigurasi `.env` (Laravel)
+Buat database MySQL:
 
-Salin dan isi:
-
-```powershell
-Copy-Item .env.example .env
-php artisan key:generate
+```sql
+CREATE DATABASE hoax_detector
+CHARACTER SET utf8mb4
+COLLATE utf8mb4_unicode_ci;
 ```
 
-Wajib isi di `.env`:
+Kemudian sesuaikan `.env`:
 
-```ini
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
 DB_DATABASE=hoax_detector
 DB_USERNAME=root
 DB_PASSWORD=
-
-# BERT — harus sama dengan bert-service/.env
-BERT_SERVICE_URL=http://127.0.0.1:8001
-BERT_SERVICE_TOKEN=local-dev-token-change-me
-BERT_SERVICE_TIMEOUT=30
-BERT_SERVICE_CONNECT_TIMEOUT=3
-BERT_CONFIDENCE_THRESHOLD=0.99   # samakan dengan threshold.json (0.99)
-
-# OpenAI — untuk OCR / transkripsi / penjelasan (jika kosong, pipeline tetap jalan untuk teks, tapi gambar/video & penjelasan akan degraded)
-OPENAI_API_KEY=sk-proj-...
-OPENAI_CHAT_MODEL=gpt-4o-mini
-OPENAI_VISION_MODEL=gpt-4o-mini
-OPENAI_TRANSCRIBE_MODEL=whisper-1
-
-# Queue & cache (dev)
-QUEUE_CONNECTION=database
-CACHE_STORE=database
 ```
 
-> **Token:** `BERT_SERVICE_TOKEN` **harus identik** di `.env` dan `bert-service/.env`. Jika kosong atau beda, klasifikasi gagal `401` dan submission akan `failed` (bukan stuck) berkat `failed()` hook C7.
+Jalankan migration dan seeder:
 
-### 2. Database
+```bash
+php artisan migrate --seed
+```
 
-```powershell
-# Buat DB
-mysql -u root -e "CREATE DATABASE hoax_detector CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+Buat storage link:
 
-php artisan migrate
-php artisan db:seed              # data demo: user, admin, dataset
+```bash
 php artisan storage:link
 ```
 
-Untuk test tanpa MySQL, `phpunit.xml` sudah `DB_CONNECTION=sqlite` `:memory:` → `php artisan test` langsung jalan (46 tests).
-
-### 3. Filament Admin
-
-```powershell
-php artisan make:filament-user
-# → email: admin@hoaxlin.id, password: ****
-# lalu:
-# mysql -u root -e "UPDATE hoax_detector.users SET is_admin=1 WHERE email='admin@hoaxlin.id';"
-```
-
-Buka `http://localhost:8000/admin` → login.
-
-### 4. Frontend
-
-```powershell
-npm install
-npm run dev     # dev dengan HMR
-# atau
-npm run build   # production build ke public/build
-```
+Seeder menyediakan data development untuk pengguna, dataset, submission, detection result, feedback, dan admin log.
 
 ---
 
-## Layanan BERT (FastAPI)
+# Konfigurasi AI
 
-Model IndoBERT v1.0.0 sudah ada di `models/indobert-hoax/v1.0.0/` (498 MB, `model.safetensors` + `tokenizer.json`, `config.json` `id2label {0:valid,1:hoax}`, `threshold.json` 0.99, `calibration.json` T=0.87). Jika belum ada, build via pipeline C3:
+## IndoBERT Service
 
-```powershell
+Laravel tidak menjalankan model BERT secara langsung. Model disajikan melalui service FastAPI pada folder:
+
+```text
+bert-service/
+```
+
+Konfigurasi Laravel di `.env`:
+
+```env
+BERT_SERVICE_URL=http://127.0.0.1:8001
+BERT_SERVICE_TIMEOUT=30
+BERT_SERVICE_CONNECT_TIMEOUT=3
+BERT_SERVICE_TOKEN=change-this-internal-token
+BERT_SERVICE_TRIES=5
+BERT_MODEL_VERSION=v1.0.0
+BERT_CONFIDENCE_THRESHOLD=0.99
+```
+
+`BERT_SERVICE_TOKEN` harus sama dengan token pada konfigurasi FastAPI.
+
+### Setup Python Service
+
+Masuk ke folder service:
+
+```bash
 cd bert-service
-# ... venv & pip install seperti di atas ...
-# Dataset sudah ada: datasets/processed/komdigi-antara-v1/ (7816 rows)
-# Jika ingin retrain:
-.\.venv\Scripts\python.exe -m train.pipeline
 ```
 
-**Start manual (tanpa `composer run dev`):**
+Buat virtual environment.
+
+Linux/macOS:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+Windows PowerShell:
 
 ```powershell
-cd bert-service
-# PowerShell: load .env ke process env
-Get-Content .env | ForEach-Object {
-    if ($_ -match '^\s*([^#][^=]*)=(.*)$') {
-        [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim().Trim('"'), 'Process')
-    }
-}
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --log-level info
-# Tunggu "Application startup complete." + "Uvicorn running on http://127.0.0.1:8001"
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
-**Health check (wajib 200 sebelum kirim submission):**
+Install dependency:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Buat file environment:
+
+Linux/macOS:
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8001/health/live              # -> {"status":"ok"}
-Invoke-RestMethod http://127.0.0.1:8001/health/ready             # -> 200 {"status":"ok","model_status":"ready"} atau 503 jika BERT_MODEL_PATH salah
-Invoke-RestMethod http://127.0.0.1:8001/version                  # -> labels [valid,hoax], threshold 0.99
-# Predict (butuh Bearer token):
-$h = @{Authorization="Bearer local-dev-token-change-me"}
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8001/predict -Headers $h -Body '{"text":"Beredar unggahan..."}' -ContentType application/json
+Copy-Item .env.example .env
 ```
 
-Detail lengkap: `bert-service/README.md` (Model Serving, Dataset, Fine-tuning).
+Konfigurasi:
+
+```env
+BERT_SERVICE_TOKEN=change-this-internal-token
+BERT_MODEL_PATH=/absolute/path/to/models/indobert-hoax/v1.0.0
+BERT_MODEL_VERSION=v1.0.0
+BERT_LOCAL_FILES_ONLY=true
+BERT_MAX_CONCURRENCY=2
+BERT_MAX_TEXT_LENGTH=20000
+BERT_MAX_SEQUENCE_LENGTH=512
+```
+
+> Repository tidak mengandalkan model besar sebagai bagian dari source code aplikasi. `BERT_MODEL_PATH` harus menunjuk ke artifact model sequence-classification yang kompatibel dan memiliki mapping label `valid` dan `hoax`. Status `meragukan` diturunkan dari confidence threshold, bukan menjadi kelas training ketiga.
+
+Detail training, dataset preparation, model serving, dan API contract tersedia di [`bert-service/README.md`](bert-service/README.md).
 
 ---
 
-## Queue & Pipeline
+## OpenAI
 
-**Alur:** `ProcessSubmission` → `ExtractSubmissionText` (`extract-text` / `extract-media`) → `ClassifySubmission` (`inference`) → `GenerateSubmissionExplanation` (`explanation`) → `completed`. Setiap job punya `tries`/`backoff`/`timeout` dan `failed()` hook (C7) yang menandai `submissions.status=failed` + `processing_events` agar tidak stuck `processing` selamanya.
+Untuk workflow multimodal dan penjelasan hasil, isi konfigurasi berikut pada `.env` Laravel:
 
-**Queue yang harus didengar (penting!):**
-
-```ini
-# composer.json dev sudah benar:
-# "php artisan queue:listen --queue=extract-text,extract-media,inference,explanation,default --tries=3"
+```env
+OPENAI_API_KEY=
+OPENAI_CHAT_MODEL=gpt-4o-mini
+OPENAI_TRANSLATION_MODEL=gpt-4o-mini
+OPENAI_CONNECT_TIMEOUT=5
+OPENAI_TIMEOUT=45
+OPENAI_TRIES=3
 ```
 
-Manual per-queue:
-
-```powershell
-php artisan queue:work --queue=extract-text,extract-media,inference,explanation,default --stop-when-empty --tries=3
-# atau per-queue untuk debug:
-php artisan queue:work --queue=inference --stop-when-empty -v
-```
-
-**Cek antrean:**
-
-```powershell
-php artisan tinker --execute="echo DB::table('jobs')->count().' jobs pending, '.DB::table('failed_jobs')->count().' failed';"
-# atau pakai helper:
-php check_jobs.php   # (jika ada)
-```
-
-**Hapus stuck jobs setelah perbaiki token/BERT:**
-
-```powershell
-php artisan tinker --execute="DB::table('jobs')->delete(); DB::table('failed_jobs')->delete();"
-# lalu kirim submission baru dan jalankan queue:work lagi
-```
-
-**Progress bar:** `ProcessingStage` enum (`queued 0% → extracting 25% → classifying 60% → explaining 85% → done 100%`). Halaman `/hasil/{id}` polling `GET /hasil/{id}/status` via Livewire `wire:poll.2s.visible` + JS fallback, auto-reload saat `completed`/`failed`.
+Tanpa OpenAI API, fungsi yang bergantung pada OCR, transkripsi, translasi, atau pembuatan penjelasan tidak dapat bekerja penuh.
 
 ---
 
-## Testing
+# Menjalankan Development Environment
 
-### Laravel (46 tests, SQLite in-memory, no MySQL needed)
+Doksli membutuhkan **Laravel application** dan **BERT service** berjalan bersamaan.
+
+## Terminal 1 — Laravel, Queue, Logs, dan Vite
+
+Dari root project:
+
+```bash
+composer run dev
+```
+
+Command tersebut menjalankan:
+
+- `php artisan serve`
+- queue listener untuk `extract-text`, `extract-media`, `inference`, `explanation`, dan `default`
+- Laravel Pail
+- Vite development server
+
+Aplikasi tersedia di:
+
+```text
+http://127.0.0.1:8000
+```
+
+> Menjalankan `php artisan serve` saja tidak cukup untuk workflow deteksi karena ekstraksi, inference, dan explanation diproses melalui queue.
+
+## Terminal 2 — FastAPI IndoBERT
+
+Dari `bert-service/`:
+
+Windows PowerShell:
 
 ```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+```
+
+Linux/macOS:
+
+```bash
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+```
+
+### Health Check
+
+Liveness:
+
+```text
+GET http://127.0.0.1:8001/health/live
+```
+
+Readiness:
+
+```text
+GET http://127.0.0.1:8001/health/ready
+```
+
+`/health/live` memastikan service hidup. `/health/ready` hanya mengembalikan status siap jika model berhasil dimuat dari `BERT_MODEL_PATH`.
+
+---
+
+# Workflow Penggunaan Website
+
+## Pemeriksaan Tanpa Login
+
+Pengguna dapat melakukan pemeriksaan langsung dari halaman utama.
+
+1. Buka halaman utama.
+2. Pilih jenis input:
+   - **Teks**
+   - **Gambar**
+   - **Video**
+   - **Tautan video**
+   - **URL berita**
+3. Masukkan konten yang ingin diperiksa.
+4. Selesaikan verifikasi keamanan/CAPTCHA.
+5. Klik tombol analisis.
+6. Sistem membuat submission dan memasukkannya ke processing pipeline.
+7. Halaman hasil menampilkan progress hingga proses selesai.
+8. Setelah selesai, pengguna dapat melihat label, confidence, dan penjelasan hasil.
+9. Hasil dapat diekspor ke PDF jika tersedia.
+
+## Pengguna Terdaftar
+
+Pengguna yang membuat akun mendapatkan fitur tambahan:
+
+1. Register melalui `/register`.
+2. Login melalui `/login`.
+3. Verifikasi email.
+4. Lakukan pemeriksaan seperti biasa.
+5. Buka `/riwayat` untuk melihat pemeriksaan sebelumnya.
+6. Buka detail riwayat untuk melihat kembali hasil.
+7. Berikan feedback jika hasil dirasa benar atau kurang tepat.
+8. Ekspor riwayat ke CSV jika diperlukan.
+9. Kelola nama, email, password, dan akun melalui halaman profil.
+
+---
+
+# Processing Pipeline
+
+Pipeline asynchronous Doksli menggunakan beberapa queue:
+
+```text
+Submission
+   │
+   ▼
+ProcessSubmission
+   │
+   ▼
+ExtractSubmissionText
+   ├── extract-text
+   └── extract-media
+   │
+   ▼
+ClassifySubmission
+   └── inference
+   │
+   ▼
+GenerateSubmissionExplanation
+   └── explanation
+   │
+   ▼
+Completed / Failed
+```
+
+Queue yang digunakan oleh development script:
+
+```text
+extract-text
+extract-media
+inference
+explanation
+default
+```
+
+Untuk menjalankan worker secara manual:
+
+```bash
+php artisan queue:work --queue=extract-text,extract-media,inference,explanation,default --tries=3
+```
+
+Cek failed jobs:
+
+```bash
+php artisan queue:failed
+```
+
+Retry semua failed jobs:
+
+```bash
+php artisan queue:retry all
+```
+
+---
+
+# Halaman Utama
+
+| Route | Fungsi |
+|---|---|
+| `/` | Homepage dan checker utama |
+| `/cara-kerja` | Penjelasan cara kerja sistem |
+| `/tentang` | Informasi tentang Doksli |
+| `/kebijakan-privasi` | Kebijakan privasi |
+| `/statistik` | Statistik pemeriksaan |
+| `/hasil/{id}` | Hasil pemeriksaan |
+| `/login` | Login pengguna |
+| `/register` | Registrasi pengguna |
+| `/profil` | Pengaturan profil |
+| `/riwayat` | Riwayat pengguna terverifikasi |
+| `/admin` | Filament Admin Panel |
+
+---
+
+# Administrator
+
+Panel admin menggunakan **Filament** dan dapat digunakan untuk mengelola serta memonitor data aplikasi.
+
+Data development dapat dibuat dengan:
+
+```bash
+php artisan migrate --seed
+```
+
+Seeder saat ini menyediakan akun administrator development:
+
+```text
+Email    : admin@hoaxlin.id
+Password : password
+```
+
+> Credential tersebut hanya untuk development/testing. Jangan gunakan credential seed di production.
+
+Buka:
+
+```text
+http://127.0.0.1:8000/admin
+```
+
+Panel admin mencakup resource seperti:
+
+- Users
+- Datasets
+- Submissions
+- Detection Results
+- Feedback
+
+---
+
+# Testing
+
+## Laravel
+
+Jalankan seluruh test:
+
+```bash
 php artisan test
-php artisan test --filter=BertClassifierTest
-php artisan test --filter=RealBertInferenceTest  # butuh BERT hidup, else skipped
-php artisan test --filter=SubmissionProgressTest
 ```
 
-`phpunit.xml` sudah `DB_CONNECTION=sqlite` `:memory:`, `QUEUE_CONNECTION=sync`, `CACHE_STORE=array`.
+## BERT Service
 
-### BERT Service (64 tests)
-
-```powershell
+```bash
 cd bert-service
-.\.venv\Scripts\python.exe -m pytest -q          # 64 passed
-.\.venv\Scripts\python.exe -m pytest tests/test_api.py -q  # 12 contract tests
+python -m pytest -q
 ```
 
-### Verifikasi manual end-to-end
+## Frontend Production Build
+
+```bash
+npm run build
+```
+
+## PHP Code Style
+
+```bash
+./vendor/bin/pint
+```
+
+Windows:
 
 ```powershell
-# 1. Pastikan BERT ready
-Invoke-RestMethod http://127.0.0.1:8001/health/ready
-# 2. Buat submission via tinker
-php artisan tinker --execute="\$s=App\Models\Submission::create(['input_type'=>'text','raw_input'=>str_repeat('Beredar unggahan... ',3),'status'=>'pending']); App\Jobs\ProcessSubmission::dispatch(\$s); echo 'id='.\$s->id;"
-# 3. Jalankan queue
-php artisan queue:work --queue=extract-text,extract-media,inference,explanation,default --stop-when-empty
-# 4. Cek hasil
-php artisan tinker --execute="\$s=App\Models\Submission::latest()->first(); echo \$s->status.' '.\$s->processing_stage.' label='.\$s->detectionResult?->label;"
+.\vendor\bin\pint
 ```
 
 ---
 
-## Panduan Administrator
+# Struktur Project
 
-### Menjalankan Lokal (untuk demo / sidang)
-
-1. **Siapkan dua terminal:**
-   - Terminal 1: `composer run dev` (menjalankan `serve` + `queue:listen` semua queue + `pail` + `vite`)
-   - Terminal 2: `cd bert-service` → `uvicorn` (jika tidak pakai `composer run dev`, jalankan manual seperti di atas)
-
-2. **Buat admin & atur:** `http://localhost:8000/admin` → cek **Users**, **Submissions**, **Detection Results**, **Feedback**.
-
-3. **Kirim uji:** buka `/` → tab **Teks** → tempel `Beredar unggahan di media sosial yang mengklaim bansos Rp 50 juta untuk semua warga` → **Cek Sekarang** → akan redirect ke `/hasil/{id}` dengan progress 0% → 100% (2s polling). Jika `failed`, cek `storage/logs/laravel.log` dan `failed_jobs`.
-
-### Kelola Pengguna & Dataset
-
-- **Jadikan admin:** `UPDATE users SET is_admin=1 WHERE email='...';`
-- **Dataset:** `/admin` → **Datasets** → tambah data valid/hoax untuk retrain (format `text`, `label`).
-- **Submission:** read-only di Filament untuk audit; ubah status manual via `php artisan tinker` jika perlu.
-
-### Monitoring & Pemeliharaan
-
-```powershell
-# Lihat job tertunda / gagal
-php artisan queue:monitor
-php artisan queue:failed              # list
-php artisan queue:retry all           # retry
-php artisan queue:flush               # hapus failed
-
-# Media retention (C12) — hapus file >30 hari
-php artisan media:prune --dry-run
-php artisan media:prune --days=30
-
-# Cache & view
-php artisan config:clear; php artisan cache:clear; php artisan view:clear
-
-# Log
-Get-Content storage\logs\laravel.log -Tail 50 -Wait  # atau php artisan pail
-Get-Content bert-service\uvicorn.log -Tail 50
-```
-
-**Jika klasifikasi stuck 60% / `failed` 401:**
-- Cek `BERT_SERVICE_TOKEN` sama di `.env` dan `bert-service/.env` → `php artisan config:clear` → restart BERT.
-- Cek BERT hidup: `Invoke-RestMethod http://127.0.0.1:8001/health/ready`.
-- Cek queue: `DB::table('jobs')->count()` — jika >0, jalankan `queue:work` dengan semua queue (bukan hanya `default`).
-
----
-
-## Struktur Proyek
-
-```
-hoax-detector/
+```text
+doksli/
 ├── app/
-│   ├── Actions/Submissions/CreateSubmission.php
-│   ├── Console/Commands/PruneOldMedia.php  # media:prune (C12)
-│   ├── Enums/ProcessingStage.php            # progressPercentage() untuk Livewire bar
-│   ├── Http/Controllers/{SubmissionController,DeteksiController,RiwayatController}
-│   ├── Jobs/{ProcessSubmission,ExtractSubmissionText,ClassifySubmission,GenerateSubmissionExplanation}
-│   ├── Livewire/SubmissionProgress.php      # wire:poll.2s.visible (D4)
-│   └── Services/{Bert/*,Extraction/*,OpenAI/*,Media/MalwareScanner.php}
+│   ├── Actions/
+│   ├── Enums/
+│   ├── Filament/
+│   ├── Http/
+│   ├── Jobs/
+│   ├── Models/
+│   └── Services/
 ├── bert-service/
-│   ├── app/{main.py,config.py,inference.py} # ModelRuntime + label-map + threshold
-│   ├── dataset/ + train/                    # C2 + C3 pipelines
-│   ├── tests/test_api.py                   # 12 contract tests
-│   └── Dockerfile                          # C18
-├── datasets/processed/komdigi-antara-v1/    # 7816 rows, manifest.json
-├── models/indobert-hoax/v1.0.0/             # 498 MB, config.json, threshold.json
-├── resources/views/{hasil.blade.php,livewire/submission-progress.blade.php}
-├── routes/{web.php,console.php}            # console.php: media:prune schedule
-└── CHECKLIST_TASK.md + PROJECT_PROGRESS.md  # progress 95%
+│   ├── app/                 # FastAPI inference service
+│   ├── dataset/             # Dataset preparation pipeline
+│   ├── train/               # Fine-tuning/evaluation pipeline
+│   ├── tests/
+│   └── README.md
+├── database/
+│   ├── factories/
+│   ├── migrations/
+│   └── seeders/
+├── resources/
+│   ├── css/
+│   ├── js/
+│   └── views/
+├── routes/
+├── storage/
+├── tests/
+├── AGENTS.md
+├── DESIGN_SYSTEM.md
+├── PRD.md
+├── PROJECT_PROGRESS.md
+├── TASK.md
+└── UI_REFACTOR_PLAN.md
 ```
 
 ---
 
-## Troubleshooting
+# Dokumentasi Project
 
-| Gejala | Penyebab Umum | Solusi |
-|---|---|---|
-| `hasil` stuck `pending` 0% | `queue:listen` hanya `default` | Gunakan `composer run dev` atau `queue:work --queue=extract-text,extract-media,inference,explanation,default` |
-| `failed` `401 Permintaan ke layanan BERT ditolak` | Token beda | Samakan `BERT_SERVICE_TOKEN` di `.env` & `bert-service/.env`, lalu `config:clear` + restart BERT |
-| `503 Model is not ready` / `CircuitBreaker open` | BERT mati atau `BERT_MODEL_PATH` salah | `Test-NetConnection 127.0.0.1 -Port 8001`, cek `uvicorn.log`, `Cache::get('breaker:bert:failures')` |
-| `SQLSTATE [2002]` di test | MySQL mati | Test sudah sqlite `:memory:`, cukup `php artisan test`; untuk manual, `mysql -u root -e "CREATE DATABASE hoax_detector;"` |
-| `git status fatal` | `.git` kosong | Sudah diperbaiki `git init` — `git log` harus ada 3 commit |
-| Gambar/video `failed` | `OPENAI_API_KEY` kosong atau kuota habis | Isi `OPENAI_API_KEY` di `.env`; cek `openai:rate` di cache; lihat `detection_results.estimated_cost_usd` |
+Repository memiliki beberapa dokumen tambahan:
 
----
+- [`PRD.md`](PRD.md) — requirement dan tujuan produk.
+- [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) — prinsip dan aturan desain antarmuka Doksli.
+- [`UI_REFACTOR_PLAN.md`](UI_REFACTOR_PLAN.md) — rencana refactoring UI.
+- [`TASK.md`](TASK.md) — task implementasi/refactoring.
+- [`PROJECT_PROGRESS.md`](PROJECT_PROGRESS.md) — catatan audit/progress project pada waktu tertentu.
+- [`AGENTS.md`](AGENTS.md) — aturan kerja untuk coding agent yang berkontribusi pada repository.
+- [`bert-service/README.md`](bert-service/README.md) — dokumentasi lengkap dataset, training, serving, dan pengujian IndoBERT.
 
-## Deployment Singkat
-
-- **Env:** `APP_ENV=production`, `APP_DEBUG=false`, `QUEUE_CONNECTION=redis` + `CACHE_STORE=redis` + `config/horizon.php`, `FILESYSTEM_DISK=s3` untuk media.
-- **Build:** `composer install --no-dev --optimize-autoloader`, `npm run build`, `php artisan migrate --force`, `php artisan storage:link`.
-- **Proses:** `php artisan horizon` (supervisor), `uvicorn app.main:app --host 0.0.0.0 --port 8001` via systemd/supervisord, `caddy`/`nginx` reverse proxy, `HEALTHCHECK` di `bert-service/Dockerfile` sudah ada.
-- **Backup:** `mysqldump hoax_detector`, `storage/app/private/submissions/*`.
+> Beberapa dokumen progress bersifat snapshot pada waktu audit tertentu. Untuk perilaku aplikasi terbaru, jadikan source code dan test suite sebagai acuan utama.
 
 ---
 
-## Referensi
+# Troubleshooting
 
-- PRD: `PRD-Sistem-Deteksi-Hoax-BERT.md`
-- Progress: `CHECKLIST_TASK.md` (95%) + `PROJECT_PROGRESS.md` (perlu re-audit)
-- BERT: `bert-service/README.md`
-- API: `POST /predict` → `bert-service/app/contracts.py`, auth `Bearer`, `X-Request-ID`
+## Submission berhenti pada proses klasifikasi
 
+Pastikan queue worker berjalan:
+
+```bash
+php artisan queue:work --queue=extract-text,extract-media,inference,explanation,default --tries=3
+```
+
+Kemudian periksa:
+
+```bash
+php artisan queue:failed
+```
+
+## BERT Service Tidak Ready
+
+Periksa:
+
+```text
+http://127.0.0.1:8001/health/live
+http://127.0.0.1:8001/health/ready
+```
+
+Jika liveness berhasil tetapi readiness gagal, biasanya model tidak dapat dimuat. Periksa:
+
+- `BERT_MODEL_PATH`
+- file model dan tokenizer
+- `BERT_MODEL_VERSION`
+- kompatibilitas label map
+
+## Laravel Mendapat 401 dari BERT
+
+Pastikan nilai berikut identik:
+
+```text
+Laravel .env               → BERT_SERVICE_TOKEN
+bert-service/.env          → BERT_SERVICE_TOKEN
+```
+
+Setelah mengubah `.env`:
+
+```bash
+php artisan optimize:clear
+```
+
+## Asset Frontend Tidak Muncul
+
+Development:
+
+```bash
+npm run dev
+```
+
+Production:
+
+```bash
+npm run build
+```
+
+## Storage atau File Upload Bermasalah
+
+```bash
+php artisan storage:link
+```
+
+Pastikan direktori `storage` dan `bootstrap/cache` dapat ditulis oleh proses PHP.
+
+## Database Belum Siap
+
+```bash
+php artisan migrate --seed
+```
+
+Untuk reset database development:
+
+```bash
+php artisan migrate:fresh --seed
+```
+
+> Perintah `migrate:fresh` akan menghapus seluruh data database aktif.
+
+---
+
+# Deployment Notes
+
+Sebelum deployment production:
+
+- gunakan `APP_ENV=production`;
+- gunakan `APP_DEBUG=false`;
+- gunakan credential database production;
+- gunakan token internal BERT yang kuat dan berbeda dari development;
+- jangan expose FastAPI inference endpoint langsung ke publik tanpa proteksi;
+- jalankan queue worker menggunakan process manager;
+- build frontend dengan `npm run build`;
+- gunakan HTTPS;
+- konfigurasi email provider production;
+- pastikan private media tidak dapat diakses tanpa authorization;
+- gunakan model artifact yang sudah diverifikasi;
+- monitor failed jobs dan error log;
+- gunakan credential admin production sendiri;
+- jangan menggunakan akun/password dari seeder.
+
+Contoh optimasi Laravel:
+
+```bash
+php artisan optimize
+```
+
+---
+
+## Repository
+
+Doksli dikembangkan sebagai proyek sistem deteksi berita hoax berbasis IndoBERT untuk Bahasa Indonesia.
+
+**Repository:** `jikrilar/doksli`
